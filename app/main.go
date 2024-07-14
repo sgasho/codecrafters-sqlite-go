@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"regexp"
 	// Available if you need it!
 	// "github.com/xwb1989/sqlparser"
 )
@@ -36,8 +37,17 @@ func main() {
 		}
 		// You can use print statements as follows for debugging, they'll be visible when running tests.
 		fmt.Println("Logs from your program will appear here!")
+		fmt.Printf("database page size: %v\n", pageSize)
 
-		fmt.Printf("database page size: %v", pageSize)
+		schemeBuffer := make([]byte, pageSize)
+		if _, err := databaseFile.Read(schemeBuffer); err != nil {
+			log.Fatal(err)
+		}
+		re, err := regexp.Compile("CREATE TABLE")
+		if err != nil {
+			log.Fatal(err)
+		}
+		fmt.Printf("number of tables: %v\n", len(re.FindAll(schemeBuffer, -1)))
 	default:
 		fmt.Println("Unknown command", command)
 		os.Exit(1)
