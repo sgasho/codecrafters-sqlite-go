@@ -37,8 +37,7 @@ func main() {
 		// You can use print statements as follows for debugging, they'll be visible when running tests.
 		fmt.Println("Logs from your program will appear here!")
 
-		// Uncomment this to pass the first stage
-		// fmt.Printf("database page size: %v", pageSize)
+		fmt.Printf("database page size: %v", pageSize)
 	default:
 		fmt.Println("Unknown command", command)
 		os.Exit(1)
