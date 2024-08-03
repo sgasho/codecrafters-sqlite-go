@@ -16,29 +16,31 @@ type LeafTablePageCell struct {
 
 type LeafTablePageCells []*LeafTablePageCell
 
-func (cs LeafTablePageCells) Print() error {
-	for _, c := range cs {
+func (cs LeafTablePageCells) RowsInStrings() ([][]string, error) {
+	rows := make([][]string, len(cs))
+	for i, c := range cs {
+		row := make([]string, 0)
 		for _, sr := range c.SerialTypeAndRecords {
 			switch sr.SerialType {
 			case SerialTypeString:
 				str, err := sr.String()
 				if err != nil {
-					return err
+					return nil, err
 				}
-				fmt.Printf("%s\t", str)
+				row = append(row, str)
 			case SerialTypeI8:
 				i8, err := sr.Int8()
 				if err != nil {
-					return err
+					return nil, err
 				}
-				fmt.Printf("%d\t", i8)
+				row = append(row, fmt.Sprintf("%d", i8))
 			default:
-				return fmt.Errorf("print() is not implemented for serial type %v", sr.SerialType)
+				return nil, fmt.Errorf("print() is not implemented for serial type %v", sr.SerialType)
 			}
-			fmt.Println()
 		}
+		rows[i] = row
 	}
-	return nil
+	return rows, nil
 }
 
 type LeafTablePageCellRequest struct {

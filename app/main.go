@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"github/com/codecrafters-io/sqlite-starter-go/app/parser"
 	"github/com/codecrafters-io/sqlite-starter-go/app/sqlite"
+	"github/com/codecrafters-io/sqlite-starter-go/app/utils"
 	"log"
 	"os"
 	"strings"
@@ -64,9 +65,11 @@ func main() {
 				if err != nil {
 					log.Fatal(err)
 				}
-				if err := cells.Print(); err != nil {
+				rows, err := cells.RowsInStrings()
+				if err != nil {
 					log.Fatal(err)
 				}
+				utils.PrintRows(rows)
 			}
 		}
 	}
