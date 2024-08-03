@@ -1,4 +1,10 @@
-package main
+package utils
+
+import "os"
+
+const (
+	maxVarIntSize = 9
+)
 
 // Uvarint decodes Big-endian bytes to uint64
 func Uvarint(buf []byte) (uint64, int) {
@@ -18,4 +24,14 @@ func Uvarint(buf []byte) (uint64, int) {
 	}
 
 	return uint64(result), bytesRead
+}
+
+func ReadUvarint(f *os.File, offset int64) (uint64, int, error) {
+	buf := make([]byte, maxVarIntSize)
+	if _, err := f.ReadAt(buf, offset); err != nil {
+		return 0, 0, err
+	}
+
+	uv, read := Uvarint(buf)
+	return uv, read, nil
 }
