@@ -59,6 +59,14 @@ func main() {
 					log.Fatal(err)
 				}
 				fmt.Println(count)
+			} else {
+				cells, err := db.Select(command)
+				if err != nil {
+					log.Fatal(err)
+				}
+				if err := cells.Print(); err != nil {
+					log.Fatal(err)
+				}
 			}
 		}
 	}

@@ -3,6 +3,9 @@ package schema
 import (
 	"fmt"
 	"github/com/codecrafters-io/sqlite-starter-go/app/cell"
+	"github/com/codecrafters-io/sqlite-starter-go/app/parser"
+
+	"github.com/rqlite/sql"
 )
 
 type ObjectType string
@@ -30,6 +33,47 @@ type SQLiteMasterRow struct {
 	SQL        string
 }
 
+func (r *SQLiteMasterRow) GetColumn(column string) (*sql.ColumnDefinition, error) {
+	stmt, err := parser.NewStatement(r.SQL)
+	if err != nil {
+		return nil, err
+	}
+
+	switch s := stmt.(type) {
+	case *sql.CreateTableStatement:
+		for _, c := range s.Columns {
+			if c.Name.String() == column {
+				return c, nil
+			}
+		}
+		return nil, fmt.Errorf("column %s not found", column)
+	default:
+		return nil, fmt.Errorf("GetColumnNames() is not implemented for statement type %T", stmt)
+	}
+}
+
+func (r *SQLiteMasterRow) GetColumns() ([]*sql.ColumnDefinition, error) {
+	stmt, err := parser.NewStatement(r.SQL)
+	if err != nil {
+		return nil, err
+	}
+
+	switch s := stmt.(type) {
+	case *sql.CreateTableStatement:
+		columns := make([]*sql.ColumnDefinition, 0)
+		for i, c := range s.Columns {
+			// odd index data of s.Columns are for column types
+			if i%2 == 1 {
+				continue
+			}
+			columns = append(columns, c)
+		}
+		return columns, nil
+	default:
+		return nil, fmt.Errorf("GetColumnNames() is not implemented for statement type %T", stmt)
+	}
+}
+
 type SQLiteMasterRows []*SQLiteMasterRow
 
 func (rs SQLiteMasterRows) RootPageMapByTableNames() map[string]int8 {
@@ -46,6 +90,37 @@ func (rs SQLiteMasterRows) GetTableNames() []string {
 		tableNames[i] = r.TableName
 	}
 	return tableNames
+}
+
+func (rs SQLiteMasterRows) GetColumn(table, column string) (*sql.ColumnDefinition, error) {
+	for _, r := range rs {
+		if r.TableName == table {
+			return r.GetColumn(column)
+		}
+	}
+	return nil, fmt.Errorf(`table "%s" not found`, table)
+}
+
+func (rs SQLiteMasterRows) GetColumns(table string) ([]*sql.ColumnDefinition, error) {
+	for _, r := range rs {
+		if r.TableName == table {
+			return r.GetColumns()
+		}
+	}
+	return nil, fmt.Errorf(`table "%s" not found`, table)
+}
+
+func (rs SQLiteMasterRows) GetColumnPos(table, column string) (int, error) {
+	cs, err := rs.GetColumns(table)
+	if err != nil {
+		return 0, err
+	}
+	for i, c := range cs {
+		if c.Name.String() == column {
+			return i, nil
+		}
+	}
+	return 0, fmt.Errorf(`column "%s" not found`, column)
 }
 
 func newSQLiteMasterRow(c *cell.LeafTablePageCell) (*SQLiteMasterRow, error) {
@@ -73,7 +148,7 @@ func newSQLiteMasterRow(c *cell.LeafTablePageCell) (*SQLiteMasterRow, error) {
 		return nil, err
 	}
 
-	sql, err := c.SerialTypeAndRecords[4].String()
+	q, err := c.SerialTypeAndRecords[4].String()
 	if err != nil {
 		return nil, err
 	}
@@ -84,7 +159,7 @@ func newSQLiteMasterRow(c *cell.LeafTablePageCell) (*SQLiteMasterRow, error) {
 		Name:       name,
 		TableName:  tableName,
 		RootPage:   rootPage,
-		SQL:        sql,
+		SQL:        q,
 	}, nil
 }
 

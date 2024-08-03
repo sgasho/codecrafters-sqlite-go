@@ -16,11 +16,37 @@ type LeafTablePageCell struct {
 
 type LeafTablePageCells []*LeafTablePageCell
 
+func (cs LeafTablePageCells) Print() error {
+	for _, c := range cs {
+		for _, sr := range c.SerialTypeAndRecords {
+			switch sr.SerialType {
+			case SerialTypeString:
+				str, err := sr.String()
+				if err != nil {
+					return err
+				}
+				fmt.Printf("%s\t", str)
+			case SerialTypeI8:
+				i8, err := sr.Int8()
+				if err != nil {
+					return err
+				}
+				fmt.Printf("%d\t", i8)
+			default:
+				return fmt.Errorf("print() is not implemented for serial type %v", sr.SerialType)
+			}
+			fmt.Println()
+		}
+	}
+	return nil
+}
+
 type LeafTablePageCellRequest struct {
-	PageType     header.PageType
-	PageOffset   uint64
-	HeaderOffset uint64
-	CellCount    uint64
+	PageType      header.PageType
+	PageOffset    uint64
+	HeaderOffset  uint64
+	CellCount     uint64
+	ColumnPosList []int
 }
 
 func NewLeafTablePageCells(f *os.File, r *LeafTablePageCellRequest) (LeafTablePageCells, error) {
@@ -31,7 +57,7 @@ func NewLeafTablePageCells(f *os.File, r *LeafTablePageCellRequest) (LeafTablePa
 			return nil, err
 		}
 
-		cell, err := GetLeafTablePageCell(f, r.PageType, int64(r.PageOffset+uint64(cellContentOffset)))
+		cell, err := GetLeafTablePageCell(f, r.PageType, int64(r.PageOffset+uint64(cellContentOffset)), r.ColumnPosList)
 		if err != nil {
 			return nil, err
 		}
@@ -53,7 +79,7 @@ func GetCellContentOffset(f *os.File, offset int64) (uint16, error) {
 	return off, nil
 }
 
-func GetLeafTablePageCell(f *os.File, t header.PageType, offset int64) (*LeafTablePageCell, error) {
+func GetLeafTablePageCell(f *os.File, t header.PageType, offset int64, columnPosList []int) (*LeafTablePageCell, error) {
 	if t != header.LeafTableBTree {
 		return nil, fmt.Errorf("GetLeafTablePageCell() is not implemented for pageType: %v", t)
 	}
@@ -93,7 +119,13 @@ func GetLeafTablePageCell(f *os.File, t header.PageType, offset int64) (*LeafTab
 	srs := make([]*SerialTypeAndRecord, 0)
 	bodyRemain := payloadBytes - recordHeaderSize
 	for bodyRemain > 0 {
-		for _, sc := range scs {
+		for i, sc := range scs {
+			if len(columnPosList) > 0 && !utils.SliceIncludes(columnPosList, i) {
+				bodyRemain -= sc.ContentSize
+				readAtOffset += int64(sc.ContentSize)
+				continue
+			}
+
 			buf := make([]byte, sc.ContentSize)
 			if _, err := f.ReadAt(buf, readAtOffset); err != nil {
 				return nil, err
