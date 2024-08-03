@@ -27,7 +27,7 @@ func IsCountStatement(q string, stmt sql.Statement) (bool, error) {
 		return false, err
 	}
 
-	r, err := regexp.Compile(`SELECT COUNT\(\*\)`)
+	r, err := regexp.Compile(`(?i)SELECT COUNT\(\*\)`)
 	if err != nil {
 		return false, err
 	}
