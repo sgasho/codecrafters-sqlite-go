@@ -87,16 +87,9 @@ func (db *sqlite) Select(q string, args ...any) (cell.LeafTablePageCells, error)
 	columns := ss.Columns
 	where := ss.WhereExpr
 
-	// TODO: handle multiple columns
-	if len(columns) > 1 {
-		return nil, errors.New("multiple columns found")
-	}
-
 	if len(columns) == 0 {
 		return nil, errors.New("no columns found")
 	}
-
-	column := columns[0].String()
 
 	if where == nil {
 		pageNum, err := db.PageNum(table)
@@ -114,7 +107,12 @@ func (db *sqlite) Select(q string, args ...any) (cell.LeafTablePageCells, error)
 			return nil, err
 		}
 
-		columnPos, err := db.firstPage.SQLiteMasterRows.GetColumnPos(table, column)
+		columnNames := make([]string, len(columns))
+		for i, column := range columns {
+			columnNames[i] = column.String()
+		}
+
+		columnPosList, err := db.firstPage.SQLiteMasterRows.GetColumnPosList(table, columnNames)
 		if err != nil {
 			return nil, err
 		}
@@ -124,7 +122,7 @@ func (db *sqlite) Select(q string, args ...any) (cell.LeafTablePageCells, error)
 			PageOffset:    uint64(lp.Offset),
 			HeaderOffset:  uint64(bhSize),
 			CellCount:     uint64(lp.BTreeHeader.CellCount),
-			ColumnPosList: []int{columnPos},
+			ColumnPosList: columnPosList,
 		})
 	}
 

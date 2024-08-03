@@ -1,6 +1,9 @@
 package utils
 
-import "fmt"
+import (
+	"fmt"
+	"strings"
+)
 
 func SliceIncludes[T comparable](slice []T, value T) bool {
 	for _, v := range slice {
@@ -13,8 +16,6 @@ func SliceIncludes[T comparable](slice []T, value T) bool {
 
 func PrintRows(rows [][]string) {
 	for _, row := range rows {
-		for _, v := range row {
-			fmt.Println(v) // TODO: allow multiple columns
-		}
+		fmt.Println(strings.Join(row, "|"))
 	}
 }

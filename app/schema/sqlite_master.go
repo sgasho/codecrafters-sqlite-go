@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"github/com/codecrafters-io/sqlite-starter-go/app/cell"
 	"github/com/codecrafters-io/sqlite-starter-go/app/parser"
+	"github/com/codecrafters-io/sqlite-starter-go/app/utils"
 
 	"github.com/rqlite/sql"
 )
@@ -110,17 +111,28 @@ func (rs SQLiteMasterRows) GetColumns(table string) ([]*sql.ColumnDefinition, er
 	return nil, fmt.Errorf(`table "%s" not found`, table)
 }
 
-func (rs SQLiteMasterRows) GetColumnPos(table, column string) (int, error) {
+func (rs SQLiteMasterRows) GetColumnPosList(table string, columns []string) ([]int, error) {
 	cs, err := rs.GetColumns(table)
 	if err != nil {
-		return 0, err
+		return nil, err
 	}
+
+	columnFound := make(map[string]bool)
+	posList := make([]int, 0)
 	for i, c := range cs {
-		if c.Name.String() == column {
-			return i, nil
+		if utils.SliceIncludes(columns, c.Name.String()) {
+			columnFound[c.Name.String()] = true
+			posList = append(posList, i)
 		}
 	}
-	return 0, fmt.Errorf(`column "%s" not found`, column)
+
+	for _, c := range columns {
+		if !columnFound[c] {
+			return nil, fmt.Errorf("column %s not found", c)
+		}
+	}
+
+	return posList, nil
 }
 
 func newSQLiteMasterRow(c *cell.LeafTablePageCell) (*SQLiteMasterRow, error) {
