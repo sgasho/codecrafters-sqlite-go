@@ -150,26 +150,46 @@ func GetLeafTablePageCell(f *os.File, r *GetLeafTablePageCellRequest) (*LeafTabl
 	}
 
 	srs := make([]*SerialTypeAndRecord, 0)
-	bodyRemain := payloadBytes - recordHeaderSize
-	for bodyRemain > 0 {
-		for i, sc := range scs {
+
+	if len(r.ColumnPosList) == 0 {
+		bodyRemain := payloadBytes - recordHeaderSize
+		for bodyRemain > 0 {
+			for _, sc := range scs {
+				off := readAtOffset
+				bodyRemain -= sc.ContentSize
+				readAtOffset += int64(sc.ContentSize)
+
+				buf := make([]byte, sc.ContentSize)
+				if _, err := f.ReadAt(buf, off); err != nil {
+					return nil, err
+				}
+
+				srs = append(srs, &SerialTypeAndRecord{
+					SerialType: sc.SerialType,
+					Record:     buf,
+				})
+			}
+		}
+	} else {
+		for _, columnPos := range r.ColumnPosList {
 			off := readAtOffset
-			bodyRemain -= sc.ContentSize
-			readAtOffset += int64(sc.ContentSize)
+			for i, sc := range scs {
+				if i != columnPos {
+					off += int64(sc.ContentSize)
+					continue
+				}
 
-			buf := make([]byte, sc.ContentSize)
-			if _, err := f.ReadAt(buf, off); err != nil {
-				return nil, err
+				buf := make([]byte, sc.ContentSize)
+				if _, err := f.ReadAt(buf, off); err != nil {
+					return nil, err
+				}
+
+				srs = append(srs, &SerialTypeAndRecord{
+					SerialType: sc.SerialType,
+					Record:     buf,
+				})
+				off += int64(sc.ContentSize)
 			}
-
-			if len(r.ColumnPosList) > 0 && !utils.SliceIncludes(r.ColumnPosList, i) {
-				continue
-			}
-
-			srs = append(srs, &SerialTypeAndRecord{
-				SerialType: sc.SerialType,
-				Record:     buf,
-			})
 		}
 	}
 

@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"github/com/codecrafters-io/sqlite-starter-go/app/cell"
 	"github/com/codecrafters-io/sqlite-starter-go/app/parser"
-	"github/com/codecrafters-io/sqlite-starter-go/app/utils"
 	"strings"
 
 	"github.com/rqlite/sql"
@@ -112,6 +111,23 @@ func (rs SQLiteMasterRows) GetColumns(table string) ([]*sql.ColumnDefinition, er
 	return nil, fmt.Errorf(`table "%s" not found`, table)
 }
 
+func (rs SQLiteMasterRows) ColumnPosMapByName(table string) (map[string]int, error) {
+	for _, r := range rs {
+		if r.TableName == table {
+			columns, err := r.GetColumns()
+			if err != nil {
+				return nil, err
+			}
+			m := make(map[string]int)
+			for i, c := range columns {
+				m[c.Name.String()] = i
+			}
+			return m, nil
+		}
+	}
+	return nil, fmt.Errorf(`table "%s" not found`, table)
+}
+
 func (rs SQLiteMasterRows) GetColumnPos(table, column string) (int, error) {
 	cs, err := rs.GetColumns(table)
 	if err != nil {
@@ -127,26 +143,19 @@ func (rs SQLiteMasterRows) GetColumnPos(table, column string) (int, error) {
 }
 
 func (rs SQLiteMasterRows) GetColumnPosList(table string, columns []string) ([]int, error) {
-	cs, err := rs.GetColumns(table)
+	columnToPos, err := rs.ColumnPosMapByName(table)
 	if err != nil {
 		return nil, err
 	}
 
-	columnFound := make(map[string]bool)
 	posList := make([]int, 0)
-	for i, c := range cs {
-		if utils.SliceIncludes(columns, c.Name.String()) {
-			columnFound[c.Name.String()] = true
-			posList = append(posList, i)
-		}
-	}
-
 	for _, c := range columns {
-		if !columnFound[c] {
-			return nil, fmt.Errorf("column %s not found", c)
+		pos, exists := columnToPos[c]
+		if !exists {
+			return nil, fmt.Errorf(`column "%s" not found`, c)
 		}
+		posList = append(posList, pos)
 	}
-
 	return posList, nil
 }
 
