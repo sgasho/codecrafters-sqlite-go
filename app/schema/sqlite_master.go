@@ -5,6 +5,7 @@ import (
 	"github/com/codecrafters-io/sqlite-starter-go/app/cell"
 	"github/com/codecrafters-io/sqlite-starter-go/app/parser"
 	"github/com/codecrafters-io/sqlite-starter-go/app/utils"
+	"strings"
 
 	"github.com/rqlite/sql"
 )
@@ -109,6 +110,20 @@ func (rs SQLiteMasterRows) GetColumns(table string) ([]*sql.ColumnDefinition, er
 		}
 	}
 	return nil, fmt.Errorf(`table "%s" not found`, table)
+}
+
+func (rs SQLiteMasterRows) GetColumnPos(table, column string) (int, error) {
+	cs, err := rs.GetColumns(table)
+	if err != nil {
+		return 0, err
+	}
+
+	for i, c := range cs {
+		if strings.ReplaceAll(c.Name.String(), `"`, "") == column {
+			return i, nil
+		}
+	}
+	return 0, fmt.Errorf(`column "%s" not found`, column)
 }
 
 func (rs SQLiteMasterRows) GetColumnPosList(table string, columns []string) ([]int, error) {

@@ -36,12 +36,13 @@ func NewDBFirstPage(f *os.File) (*FirstPage, error) {
 		return nil, err
 	}
 
-	cells, err := cell.NewLeafTablePageCells(f, &cell.LeafTablePageCellRequest{
+	cells, err := cell.NewLeafTablePageCells(f, &cell.NewLeafTablePageCellRequest{
 		PageType:      bh.PageType,
 		PageOffset:    0,
 		HeaderOffset:  uint64(header.FileHeaderSize + bhSize),
 		CellCount:     uint64(bh.CellCount),
 		ColumnPosList: nil,
+		Where:         nil,
 	})
 	if err != nil {
 		return nil, err

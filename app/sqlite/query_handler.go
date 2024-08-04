@@ -56,12 +56,13 @@ func (db *sqlite) Count(q string, args ...any) (int, error) {
 			return 0, err
 		}
 
-		cells, err := cell.NewLeafTablePageCells(db.f, &cell.LeafTablePageCellRequest{
+		cells, err := cell.NewLeafTablePageCells(db.f, &cell.NewLeafTablePageCellRequest{
 			PageType:      lp.PageType,
 			PageOffset:    uint64(lp.Offset),
 			HeaderOffset:  uint64(bhSize),
 			CellCount:     uint64(lp.BTreeHeader.CellCount),
 			ColumnPosList: nil,
+			Where:         nil,
 		})
 		if err != nil {
 			return 0, err
@@ -85,46 +86,58 @@ func (db *sqlite) Select(q string, args ...any) (cell.LeafTablePageCells, error)
 
 	table := strings.ReplaceAll(ss.Source.String(), `"`, "")
 	columns := ss.Columns
-	where := ss.WhereExpr
 
 	if len(columns) == 0 {
 		return nil, errors.New("no columns found")
 	}
 
-	if where == nil {
-		pageNum, err := db.PageNum(table)
-		if err != nil {
-			return nil, err
-		}
-
-		lp, err := page.NewLeafTablePage(db.f, db.PageSize(), uint(pageNum))
-		if err != nil {
-			return nil, err
-		}
-
-		bhSize, err := lp.BTreeHeader.PageType.GetBTreeHeaderSize()
-		if err != nil {
-			return nil, err
-		}
-
-		columnNames := make([]string, len(columns))
-		for i, column := range columns {
-			columnNames[i] = column.String()
-		}
-
-		columnPosList, err := db.firstPage.SQLiteMasterRows.GetColumnPosList(table, columnNames)
-		if err != nil {
-			return nil, err
-		}
-
-		return cell.NewLeafTablePageCells(db.f, &cell.LeafTablePageCellRequest{
-			PageType:      lp.PageType,
-			PageOffset:    uint64(lp.Offset),
-			HeaderOffset:  uint64(bhSize),
-			CellCount:     uint64(lp.BTreeHeader.CellCount),
-			ColumnPosList: columnPosList,
-		})
+	where, err := parser.NewWhereClause(ss.WhereExpr)
+	if err != nil {
+		return nil, err
 	}
 
-	return nil, nil
+	wherePos := 0
+	if where != nil {
+		wherePos, err = db.firstPage.SQLiteMasterRows.GetColumnPos(table, where.Key)
+		if err != nil {
+			return nil, err
+		}
+	}
+
+	pageNum, err := db.PageNum(table)
+	if err != nil {
+		return nil, err
+	}
+
+	lp, err := page.NewLeafTablePage(db.f, db.PageSize(), uint(pageNum))
+	if err != nil {
+		return nil, err
+	}
+
+	bhSize, err := lp.BTreeHeader.PageType.GetBTreeHeaderSize()
+	if err != nil {
+		return nil, err
+	}
+
+	columnNames := make([]string, len(columns))
+	for i, column := range columns {
+		columnNames[i] = column.String()
+	}
+
+	columnPosList, err := db.firstPage.SQLiteMasterRows.GetColumnPosList(table, columnNames)
+	if err != nil {
+		return nil, err
+	}
+
+	return cell.NewLeafTablePageCells(db.f, &cell.NewLeafTablePageCellRequest{
+		PageType:      lp.PageType,
+		PageOffset:    uint64(lp.Offset),
+		HeaderOffset:  uint64(bhSize),
+		CellCount:     uint64(lp.BTreeHeader.CellCount),
+		ColumnPosList: columnPosList,
+		Where: &cell.Where{
+			Clause:    where,
+			ColumnPos: wherePos,
+		},
+	})
 }

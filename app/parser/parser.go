@@ -34,3 +34,26 @@ func IsCountStatement(q string, stmt sql.Statement) (bool, error) {
 
 	return len(ss.Columns) == 1 && r.MatchString(q), nil
 }
+
+// WhereClause only considers WHERE key = val so far
+type WhereClause struct {
+	Key   string
+	Value string
+}
+
+func NewWhereClause(expr sql.Expr) (*WhereClause, error) {
+	if expr == nil {
+		return nil, nil
+	}
+
+	whereClause := strings.SplitN(expr.String(), "=", 2)
+
+	if len(whereClause) != 2 {
+		return nil, fmt.Errorf("invalid WHERE clause expression: %s", expr.String())
+	}
+
+	return &WhereClause{
+		Key:   strings.Trim(whereClause[0], "\" "),
+		Value: strings.Trim(whereClause[1], "' "),
+	}, nil
+}

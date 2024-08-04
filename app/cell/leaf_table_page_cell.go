@@ -5,9 +5,16 @@ import (
 	"encoding/binary"
 	"fmt"
 	"github/com/codecrafters-io/sqlite-starter-go/app/header"
+	"github/com/codecrafters-io/sqlite-starter-go/app/parser"
 	"github/com/codecrafters-io/sqlite-starter-go/app/utils"
 	"os"
+	"strconv"
 )
+
+type Where struct {
+	Clause    *parser.WhereClause
+	ColumnPos int
+}
 
 type LeafTablePageCell struct {
 	RowID                uint64
@@ -43,27 +50,36 @@ func (cs LeafTablePageCells) RowsInStrings() ([][]string, error) {
 	return rows, nil
 }
 
-type LeafTablePageCellRequest struct {
+type NewLeafTablePageCellRequest struct {
 	PageType      header.PageType
 	PageOffset    uint64
 	HeaderOffset  uint64
 	CellCount     uint64
 	ColumnPosList []int
+	Where         *Where
 }
 
-func NewLeafTablePageCells(f *os.File, r *LeafTablePageCellRequest) (LeafTablePageCells, error) {
-	cells := make(LeafTablePageCells, r.CellCount)
+func NewLeafTablePageCells(f *os.File, r *NewLeafTablePageCellRequest) (LeafTablePageCells, error) {
+	cells := make(LeafTablePageCells, 0)
 	for i := uint64(0); i < r.CellCount; i++ {
 		cellContentOffset, err := GetCellContentOffset(f, int64(r.PageOffset+r.HeaderOffset+2*i))
 		if err != nil {
 			return nil, err
 		}
 
-		cell, err := GetLeafTablePageCell(f, r.PageType, int64(r.PageOffset+uint64(cellContentOffset)), r.ColumnPosList)
+		cell, err := GetLeafTablePageCell(f, &GetLeafTablePageCellRequest{
+			PageType:      r.PageType,
+			Offset:        int64(r.PageOffset + uint64(cellContentOffset)),
+			ColumnPosList: r.ColumnPosList,
+			Where:         r.Where,
+		})
 		if err != nil {
 			return nil, err
 		}
-		cells[i] = cell
+		if cell == nil {
+			continue
+		}
+		cells = append(cells, cell)
 	}
 	return cells, nil
 }
@@ -81,12 +97,19 @@ func GetCellContentOffset(f *os.File, offset int64) (uint16, error) {
 	return off, nil
 }
 
-func GetLeafTablePageCell(f *os.File, t header.PageType, offset int64, columnPosList []int) (*LeafTablePageCell, error) {
-	if t != header.LeafTableBTree {
-		return nil, fmt.Errorf("GetLeafTablePageCell() is not implemented for pageType: %v", t)
+type GetLeafTablePageCellRequest struct {
+	PageType      header.PageType
+	Offset        int64
+	ColumnPosList []int
+	Where         *Where
+}
+
+func GetLeafTablePageCell(f *os.File, r *GetLeafTablePageCellRequest) (*LeafTablePageCell, error) {
+	if r.PageType != header.LeafTableBTree {
+		return nil, fmt.Errorf("GetLeafTablePageCell() is not implemented for pageType: %v", r.PageType)
 	}
 
-	readAtOffset := offset
+	readAtOffset := r.Offset
 
 	payloadBytes, read, err := utils.ReadUvarint(f, readAtOffset)
 	if err != nil {
@@ -118,28 +141,35 @@ func GetLeafTablePageCell(f *os.File, t header.PageType, offset int64, columnPos
 		readAtOffset += int64(read)
 	}
 
+	match, err := doesCellMatchCondition(f, scs, readAtOffset, r.Where)
+	if err != nil {
+		return nil, err
+	}
+	if !match {
+		return nil, nil
+	}
+
 	srs := make([]*SerialTypeAndRecord, 0)
 	bodyRemain := payloadBytes - recordHeaderSize
 	for bodyRemain > 0 {
 		for i, sc := range scs {
-			if len(columnPosList) > 0 && !utils.SliceIncludes(columnPosList, i) {
-				bodyRemain -= sc.ContentSize
-				readAtOffset += int64(sc.ContentSize)
-				continue
-			}
+			off := readAtOffset
+			bodyRemain -= sc.ContentSize
+			readAtOffset += int64(sc.ContentSize)
 
 			buf := make([]byte, sc.ContentSize)
-			if _, err := f.ReadAt(buf, readAtOffset); err != nil {
+			if _, err := f.ReadAt(buf, off); err != nil {
 				return nil, err
+			}
+
+			if len(r.ColumnPosList) > 0 && !utils.SliceIncludes(r.ColumnPosList, i) {
+				continue
 			}
 
 			srs = append(srs, &SerialTypeAndRecord{
 				SerialType: sc.SerialType,
 				Record:     buf,
 			})
-
-			bodyRemain -= sc.ContentSize
-			readAtOffset += int64(sc.ContentSize)
 		}
 	}
 
@@ -147,4 +177,48 @@ func GetLeafTablePageCell(f *os.File, t header.PageType, offset int64, columnPos
 		RowID:                rowID,
 		SerialTypeAndRecords: srs,
 	}, nil
+}
+
+func doesCellMatchCondition(f *os.File, scs []*SerialTypeAndContentSize, currentOffset int64, where *Where) (bool, error) {
+	if where == nil || where.Clause == nil {
+		return true, nil
+	}
+
+	wherePosOffset := currentOffset
+	for i, sc := range scs {
+		if i == where.ColumnPos {
+			buf := make([]byte, sc.ContentSize)
+			if _, err := f.ReadAt(buf, wherePosOffset); err != nil {
+				return false, err
+			}
+
+			sr := &SerialTypeAndRecord{
+				SerialType: sc.SerialType,
+				Record:     buf,
+			}
+
+			switch sc.SerialType {
+			case SerialTypeString:
+				str, err := sr.String()
+				if err != nil {
+					return false, err
+				}
+				if str != where.Clause.Value {
+					return false, nil
+				}
+			case SerialTypeI8:
+				i8, err := sr.Int8()
+				if err != nil {
+					return false, err
+				}
+				if strconv.Itoa(int(i8)) != where.Clause.Value {
+					return false, nil
+				}
+			default:
+				return false, fmt.Errorf("where-check is not implemented for serial type %v", sc.SerialType)
+			}
+		}
+		wherePosOffset += int64(sc.ContentSize)
+	}
+	return true, nil
 }
