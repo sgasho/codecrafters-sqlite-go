@@ -23,6 +23,7 @@ const (
 	SerialTypeReserved2
 	SerialTypeBLOB
 	SerialTypeString
+	SerialTypeAutoIncrPrimaryKey = SerialTypeReserved1
 )
 
 type SerialTypeAndContentSize struct {
@@ -53,6 +54,8 @@ func (sr *SerialTypeAndRecord) String() (string, error) {
 	switch sr.SerialType {
 	case SerialTypeString:
 		return string(sr.Record), nil
+	case SerialTypeNull:
+		return "<null>", nil
 	default:
 		return "", fmt.Errorf("SerialTypeAndRecord.String() is not implemented for SerialType: %v", sr.SerialType)
 	}

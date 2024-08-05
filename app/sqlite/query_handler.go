@@ -4,9 +4,12 @@ import (
 	"errors"
 	"fmt"
 	"github/com/codecrafters-io/sqlite-starter-go/app/cell"
+	"github/com/codecrafters-io/sqlite-starter-go/app/header"
 	"github/com/codecrafters-io/sqlite-starter-go/app/page"
 	"github/com/codecrafters-io/sqlite-starter-go/app/parser"
 	"strings"
+
+	"github.com/rqlite/sql"
 )
 
 type SQLite interface {
@@ -57,12 +60,13 @@ func (db *sqlite) Count(q string, args ...any) (int, error) {
 		}
 
 		cells, err := cell.NewLeafTablePageCells(db.f, &cell.NewLeafTablePageCellRequest{
-			PageType:      lp.PageType,
-			PageOffset:    uint64(lp.Offset),
-			HeaderOffset:  uint64(bhSize),
-			CellCount:     uint64(lp.BTreeHeader.CellCount),
-			ColumnPosList: nil,
-			Where:         nil,
+			PageType:           lp.PageType,
+			PageOffset:         uint64(lp.Offset),
+			HeaderOffset:       uint64(bhSize),
+			CellCount:          uint64(lp.BTreeHeader.CellCount),
+			ColumnPosList:      nil,
+			AutoIncrKeyPosList: nil,
+			Where:              nil,
 		})
 		if err != nil {
 			return 0, err
@@ -109,7 +113,40 @@ func (db *sqlite) Select(q string, args ...any) (cell.LeafTablePageCells, error)
 		return nil, err
 	}
 
-	lp, err := page.NewLeafTablePage(db.f, db.PageSize(), uint(pageNum))
+	pageType, err := page.GetPageType(db.f, db.PageSize(), uint(pageNum))
+	if err != nil {
+		return nil, err
+	}
+
+	traverse := &TraverseBTree{
+		PageNum: uint(pageNum),
+		Table:   table,
+		Columns: columns,
+		Where: &cell.Where{
+			Clause:    where,
+			ColumnPos: wherePos,
+		},
+	}
+
+	switch pageType {
+	case header.LeafTableBTree:
+		return db.getLeafTablePageCells(traverse)
+	case header.InteriorTableBTree:
+		return db.traverseInteriorTableToGetCells(traverse)
+	default:
+		return nil, fmt.Errorf("invalid page type: %v", pageType)
+	}
+}
+
+type TraverseBTree struct {
+	PageNum uint
+	Table   string
+	Columns []*sql.ResultColumn
+	Where   *cell.Where
+}
+
+func (db *sqlite) getLeafTablePageCells(t *TraverseBTree) (cell.LeafTablePageCells, error) {
+	lp, err := page.NewLeafTablePage(db.f, db.PageSize(), t.PageNum)
 	if err != nil {
 		return nil, err
 	}
@@ -119,25 +156,103 @@ func (db *sqlite) Select(q string, args ...any) (cell.LeafTablePageCells, error)
 		return nil, err
 	}
 
-	columnNames := make([]string, len(columns))
-	for i, column := range columns {
+	columnNames := make([]string, len(t.Columns))
+	for i, column := range t.Columns {
 		columnNames[i] = column.String()
 	}
 
-	columnPosList, err := db.firstPage.SQLiteMasterRows.GetColumnPosList(table, columnNames)
+	columnPosList, err := db.firstPage.SQLiteMasterRows.GetColumnPosList(t.Table, columnNames)
+	if err != nil {
+		return nil, err
+	}
+
+	autoIncrPrimaryKeys, err := db.firstPage.SQLiteMasterRows.AutoIncrIntegerPrimaryKeys(t.Table)
+	if err != nil {
+		return nil, err
+	}
+
+	autoIncrPrimaryKeyPosList, err := db.firstPage.SQLiteMasterRows.GetColumnPosList(t.Table, autoIncrPrimaryKeys)
 	if err != nil {
 		return nil, err
 	}
 
 	return cell.NewLeafTablePageCells(db.f, &cell.NewLeafTablePageCellRequest{
-		PageType:      lp.PageType,
-		PageOffset:    uint64(lp.Offset),
-		HeaderOffset:  uint64(bhSize),
-		CellCount:     uint64(lp.BTreeHeader.CellCount),
-		ColumnPosList: columnPosList,
-		Where: &cell.Where{
-			Clause:    where,
-			ColumnPos: wherePos,
-		},
+		PageType:           lp.PageType,
+		PageOffset:         uint64(lp.Offset),
+		HeaderOffset:       uint64(bhSize),
+		CellCount:          uint64(lp.BTreeHeader.CellCount),
+		ColumnPosList:      columnPosList,
+		AutoIncrKeyPosList: autoIncrPrimaryKeyPosList,
+		Where:              t.Where,
 	})
+}
+
+func (db *sqlite) traverseInteriorTableToGetCells(t *TraverseBTree) (cell.LeafTablePageCells, error) {
+	b, bhSize, err := header.NewBTreeHeader(db.f, (t.PageNum-1)*db.PageSize())
+	if err != nil {
+		return nil, err
+	}
+
+	if b.PageType == header.LeafTableBTree {
+		return db.getLeafTablePageCells(&TraverseBTree{
+			PageNum: t.PageNum,
+			Table:   t.Table,
+			Columns: t.Columns,
+			Where:   t.Where,
+		})
+	}
+
+	ip, err := page.NewInteriorTable(db.f, db.PageSize(), t.PageNum)
+	if err != nil {
+		return nil, err
+	}
+
+	columnNames := make([]string, len(t.Columns))
+	for i, column := range t.Columns {
+		columnNames[i] = column.String()
+	}
+
+	columnPosList, err := db.firstPage.SQLiteMasterRows.GetColumnPosList(t.Table, columnNames)
+	if err != nil {
+		return nil, err
+	}
+
+	cells, err := cell.NewInteriorTablePageCells(db.f, &cell.NewInteriorTablePageCellRequest{
+		PageType:      ip.PageType,
+		PageOffset:    uint64(ip.Offset),
+		HeaderOffset:  uint64(bhSize),
+		CellCount:     uint64(ip.BTreeHeader.CellCount),
+		ColumnPosList: columnPosList,
+		Where:         t.Where,
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	leafCells := make(cell.LeafTablePageCells, 0)
+	for _, c := range cells {
+		cs, err := db.traverseInteriorTableToGetCells(&TraverseBTree{
+			PageNum: uint(c.LeftChildPageNum),
+			Table:   t.Table,
+			Columns: t.Columns,
+			Where:   t.Where,
+		})
+		if err != nil {
+			return nil, err
+		}
+		leafCells = append(leafCells, cs...)
+	}
+
+	cs, err := db.traverseInteriorTableToGetCells(&TraverseBTree{
+		PageNum: ip.RightMostPointer,
+		Table:   t.Table,
+		Columns: t.Columns,
+		Where:   t.Where,
+	})
+	if err != nil {
+		return nil, err
+	}
+	leafCells = append(leafCells, cs...)
+
+	return leafCells, nil
 }

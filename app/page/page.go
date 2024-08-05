@@ -20,6 +20,11 @@ type LeafPage struct {
 	*header.BTreeHeader
 }
 
+type InteriorTable struct {
+	Offset uint
+	*header.BTreeHeader
+}
+
 func NewDBFirstPage(f *os.File) (*FirstPage, error) {
 	fh, read, err := header.NewFileHeader(f)
 	if err != nil {
@@ -37,12 +42,13 @@ func NewDBFirstPage(f *os.File) (*FirstPage, error) {
 	}
 
 	cells, err := cell.NewLeafTablePageCells(f, &cell.NewLeafTablePageCellRequest{
-		PageType:      bh.PageType,
-		PageOffset:    0,
-		HeaderOffset:  uint64(header.FileHeaderSize + bhSize),
-		CellCount:     uint64(bh.CellCount),
-		ColumnPosList: nil,
-		Where:         nil,
+		PageType:           bh.PageType,
+		PageOffset:         0,
+		HeaderOffset:       uint64(header.FileHeaderSize + bhSize),
+		CellCount:          uint64(bh.CellCount),
+		ColumnPosList:      nil,
+		AutoIncrKeyPosList: nil,
+		Where:              nil,
 	})
 	if err != nil {
 		return nil, err
@@ -60,9 +66,29 @@ func NewDBFirstPage(f *os.File) (*FirstPage, error) {
 	}, nil
 }
 
+func GetPageType(f *os.File, pageSize, pageNum uint) (header.PageType, error) {
+	if pageNum <= 0 {
+		return 0, fmt.Errorf("invalid pageNum: %d, should be greater than 1", pageNum)
+	}
+
+	if pageNum == 1 {
+		bh, _, err := header.NewBTreeHeader(f, header.FileHeaderSize)
+		if err != nil {
+			return 0, err
+		}
+		return bh.PageType, nil
+	}
+
+	bh, _, err := header.NewBTreeHeader(f, (pageNum-1)*pageSize)
+	if err != nil {
+		return 0, err
+	}
+	return bh.PageType, nil
+}
+
 func NewLeafTablePage(f *os.File, pageSize, pageNum uint) (*LeafPage, error) {
 	if pageNum <= 0 {
-		return nil, fmt.Errorf("invalid pageNum: %d, should be greater than 1", pageNum)
+		return nil, fmt.Errorf("invalid pageNum: %d, should be greater than or equal to 1", pageNum)
 	}
 
 	if pageNum == 1 {
@@ -75,6 +101,26 @@ func NewLeafTablePage(f *os.File, pageSize, pageNum uint) (*LeafPage, error) {
 	}
 
 	return &LeafPage{
+		Offset:      (pageNum - 1) * pageSize,
+		BTreeHeader: bh,
+	}, nil
+}
+
+func NewInteriorTable(f *os.File, pageSize, pageNum uint) (*InteriorTable, error) {
+	if pageNum <= 0 {
+		return nil, fmt.Errorf("invalid pageNum: %d, should be greater than or equal to 1", pageNum)
+	}
+
+	if pageNum == 1 {
+		return nil, errors.New("call NewDBFirstPage when pageNum == 1")
+	}
+
+	bh, _, err := header.NewBTreeHeader(f, (pageNum-1)*pageSize)
+	if err != nil {
+		return nil, err
+	}
+
+	return &InteriorTable{
 		Offset:      (pageNum - 1) * pageSize,
 		BTreeHeader: bh,
 	}, nil

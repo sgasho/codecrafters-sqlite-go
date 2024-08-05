@@ -29,7 +29,7 @@ func (cs LeafTablePageCells) RowsInStrings() ([][]string, error) {
 		row := make([]string, 0)
 		for _, sr := range c.SerialTypeAndRecords {
 			switch sr.SerialType {
-			case SerialTypeString:
+			case SerialTypeString, SerialTypeNull:
 				str, err := sr.String()
 				if err != nil {
 					return nil, err
@@ -41,6 +41,8 @@ func (cs LeafTablePageCells) RowsInStrings() ([][]string, error) {
 					return nil, err
 				}
 				row = append(row, fmt.Sprintf("%d", i8))
+			case SerialTypeAutoIncrPrimaryKey:
+				row = append(row, fmt.Sprintf("%d", c.RowID))
 			default:
 				return nil, fmt.Errorf("print() is not implemented for serial type %v", sr.SerialType)
 			}
@@ -51,12 +53,13 @@ func (cs LeafTablePageCells) RowsInStrings() ([][]string, error) {
 }
 
 type NewLeafTablePageCellRequest struct {
-	PageType      header.PageType
-	PageOffset    uint64
-	HeaderOffset  uint64
-	CellCount     uint64
-	ColumnPosList []int
-	Where         *Where
+	PageType           header.PageType
+	PageOffset         uint64
+	HeaderOffset       uint64
+	CellCount          uint64
+	ColumnPosList      []int
+	AutoIncrKeyPosList []int
+	Where              *Where
 }
 
 func NewLeafTablePageCells(f *os.File, r *NewLeafTablePageCellRequest) (LeafTablePageCells, error) {
@@ -68,10 +71,11 @@ func NewLeafTablePageCells(f *os.File, r *NewLeafTablePageCellRequest) (LeafTabl
 		}
 
 		cell, err := GetLeafTablePageCell(f, &GetLeafTablePageCellRequest{
-			PageType:      r.PageType,
-			Offset:        int64(r.PageOffset + uint64(cellContentOffset)),
-			ColumnPosList: r.ColumnPosList,
-			Where:         r.Where,
+			PageType:           r.PageType,
+			Offset:             int64(r.PageOffset + uint64(cellContentOffset)),
+			ColumnPosList:      r.ColumnPosList,
+			AutoIncrKeyPosList: r.AutoIncrKeyPosList,
+			Where:              r.Where,
 		})
 		if err != nil {
 			return nil, err
@@ -98,10 +102,11 @@ func GetCellContentOffset(f *os.File, offset int64) (uint16, error) {
 }
 
 type GetLeafTablePageCellRequest struct {
-	PageType      header.PageType
-	Offset        int64
-	ColumnPosList []int
-	Where         *Where
+	PageType           header.PageType
+	Offset             int64
+	ColumnPosList      []int
+	AutoIncrKeyPosList []int
+	Where              *Where
 }
 
 func GetLeafTablePageCell(f *os.File, r *GetLeafTablePageCellRequest) (*LeafTablePageCell, error) {
@@ -131,14 +136,22 @@ func GetLeafTablePageCell(f *os.File, r *GetLeafTablePageCellRequest) (*LeafTabl
 
 	scs := make([]*SerialTypeAndContentSize, 0)
 	headerRemain := recordHeaderSize - uint64(read) // The varint value is the size of the header in bytes including the size varint itself.
+	currentColumnPos := 0
 	for headerRemain > 0 {
 		serialType, read, err := utils.ReadUvarint(f, readAtOffset)
 		if err != nil {
 			return nil, err
 		}
+		// has possibility to be auto increment primary key when null
+		if serialType == uint64(SerialTypeNull) {
+			if utils.SliceIncludes(r.AutoIncrKeyPosList, currentColumnPos) {
+				serialType = uint64(SerialTypeAutoIncrPrimaryKey)
+			}
+		}
 		scs = append(scs, GetSerialTypeAndContentSize(serialType))
 		headerRemain -= uint64(read)
 		readAtOffset += int64(read)
+		currentColumnPos++
 	}
 
 	match, err := doesCellMatchCondition(f, scs, readAtOffset, r.Where)
@@ -218,7 +231,7 @@ func doesCellMatchCondition(f *os.File, scs []*SerialTypeAndContentSize, current
 			}
 
 			switch sc.SerialType {
-			case SerialTypeString:
+			case SerialTypeString, SerialTypeNull:
 				str, err := sr.String()
 				if err != nil {
 					return false, err

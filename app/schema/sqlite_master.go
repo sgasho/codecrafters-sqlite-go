@@ -53,6 +53,35 @@ func (r *SQLiteMasterRow) GetColumn(column string) (*sql.ColumnDefinition, error
 	}
 }
 
+func (r *SQLiteMasterRow) AutoIncrIntegerPrimaryKeys() ([]string, error) {
+	stmt, err := parser.NewStatement(r.SQL)
+	if err != nil {
+		return nil, err
+	}
+
+	keys := make([]string, 0)
+	switch s := stmt.(type) {
+	case *sql.CreateTableStatement:
+		for i, c := range s.Columns {
+			if i%2 == 1 {
+				continue
+			}
+
+			typeInfo := s.Columns[i+1]
+			if typeInfo.Name.String() == `"integer"` {
+				for _, constraint := range typeInfo.Constraints {
+					if constraint.String() == "PRIMARY KEY AUTOINCREMENT" {
+						keys = append(keys, c.Name.String())
+					}
+				}
+			}
+		}
+		return keys, nil
+	default:
+		return nil, fmt.Errorf("HasAutoIncrIntegerPrimaryKey() is not implemented for statement type %T", stmt)
+	}
+}
+
 func (r *SQLiteMasterRow) GetColumns() ([]*sql.ColumnDefinition, error) {
 	stmt, err := parser.NewStatement(r.SQL)
 	if err != nil {
@@ -76,6 +105,15 @@ func (r *SQLiteMasterRow) GetColumns() ([]*sql.ColumnDefinition, error) {
 }
 
 type SQLiteMasterRows []*SQLiteMasterRow
+
+func (rs SQLiteMasterRows) AutoIncrIntegerPrimaryKeys(table string) ([]string, error) {
+	for _, r := range rs {
+		if r.TableName == table {
+			return r.AutoIncrIntegerPrimaryKeys()
+		}
+	}
+	return nil, fmt.Errorf(`table "%s" not found`, table)
+}
 
 func (rs SQLiteMasterRows) RootPageMapByTableNames() map[string]int8 {
 	m := make(map[string]int8)
