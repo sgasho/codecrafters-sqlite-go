@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/binary"
 	"fmt"
+	"log"
 )
 
 type SerialType int
@@ -105,6 +106,7 @@ func (sr *SerialTypeAndRecord) Int32() (int32, error) {
 func (sr *SerialTypeAndRecord) Int() (int, error) {
 	switch sr.SerialType {
 	case SerialTypeI8:
+		log.Println("Int(): sr.Int8()")
 		i8, err := sr.Int8()
 		return int(i8), err
 	case SerialTypeI16:
