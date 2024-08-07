@@ -251,8 +251,7 @@ func newSQLiteMasterRow(c *cell.LeafTablePageCell) (*SQLiteMasterRow, error) {
 		return nil, err
 	}
 
-	fmt.Println("get root page")
-	rootPage, err := c.SerialTypeAndRecords[3].Int8()
+	rootPage, err := c.SerialTypeAndRecords[3].Int()
 	if err != nil {
 		return nil, err
 	}

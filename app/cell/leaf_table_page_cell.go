@@ -36,7 +36,6 @@ func (cs LeafTablePageCells) RowsInStrings() ([][]string, error) {
 				}
 				row = append(row, str)
 			case SerialTypeI8:
-				fmt.Println("RowsInStrings: sr.Int8()")
 				i8, err := sr.Int8()
 				if err != nil {
 					return nil, err
@@ -251,7 +250,6 @@ func doesCellMatchCondition(f *os.File, scs []*SerialTypeAndContentSize, current
 					return false, nil
 				}
 			case SerialTypeI8:
-				fmt.Println("doesCellMatchCondition(): sr.Int8()")
 				i8, err := sr.Int8()
 				if err != nil {
 					return false, err

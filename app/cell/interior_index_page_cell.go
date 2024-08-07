@@ -112,11 +112,6 @@ func GetInteriorIndexPageCell(f *os.File, r *GetInteriorIndexPageCellRequest) (*
 		}
 	}
 
-	buf = make([]byte, 4)
-	if _, err := f.ReadAt(buf, readAtOffset); err != nil {
-		return nil, err
-	}
-
 	return &InteriorIndexPageCell{
 		LeftChildPageNum:     leftChildPageNum,
 		SerialTypeAndRecords: srs,
