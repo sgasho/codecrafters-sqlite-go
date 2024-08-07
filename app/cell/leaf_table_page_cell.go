@@ -240,7 +240,7 @@ func doesCellMatchCondition(f *os.File, scs []*SerialTypeAndContentSize, current
 				Record:     buf,
 			}
 
-			switch sc.SerialType {
+			switch sr.SerialType {
 			case SerialTypeString, SerialTypeNull:
 				str, err := sr.String()
 				if err != nil {
