@@ -16,6 +16,7 @@ import (
 
 // Usage: your_sqlite3.sh sample.sqlite .dbinfo
 func main() {
+	fmt.Println("test")
 	databaseFilePath := os.Args[1]
 	command := os.Args[2]
 
