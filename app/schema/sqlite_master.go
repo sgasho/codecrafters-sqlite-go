@@ -30,7 +30,7 @@ type SQLiteMasterRow struct {
 	ObjectType ObjectType
 	Name       string
 	TableName  string
-	RootPage   int8
+	RootPage   int
 	SQL        string
 }
 
@@ -115,12 +115,46 @@ func (rs SQLiteMasterRows) AutoIncrIntegerPrimaryKeys(table string) ([]string, e
 	return nil, fmt.Errorf(`table "%s" not found`, table)
 }
 
-func (rs SQLiteMasterRows) RootPageMapByTableNames() map[string]int8 {
-	m := make(map[string]int8)
+func (rs SQLiteMasterRows) RootTablePageMapByTableNames() map[string]int {
+	m := make(map[string]int)
 	for _, row := range rs {
-		m[row.TableName] = row.RootPage
+		if strings.Contains(row.SQL, "CREATE TABLE") {
+			m[row.TableName] = row.RootPage
+		}
 	}
 	return m
+}
+
+type IndexPageAndColumns struct {
+	PageNum int
+	Columns []string
+}
+
+func (rs SQLiteMasterRows) RootIndexPageAndColumnMapByTableNames() (map[string]*IndexPageAndColumns, error) {
+	m := make(map[string]*IndexPageAndColumns)
+	for _, row := range rs {
+		if strings.Contains(row.SQL, "CREATE INDEX") {
+			stmt, err := parser.NewStatement(row.SQL)
+			if err != nil {
+				return nil, err
+			}
+			switch s := stmt.(type) {
+			case *sql.CreateIndexStatement:
+				columns := s.Columns
+				columnNames := make([]string, 0)
+				for _, column := range columns {
+					columnNames = append(columnNames, column.String())
+				}
+				m[row.TableName] = &IndexPageAndColumns{
+					PageNum: row.RootPage,
+					Columns: columnNames,
+				}
+			default:
+				return nil, fmt.Errorf("RootIndexPageAndColumnMapByTableNames() is not implemented for statement type %T", stmt)
+			}
+		}
+	}
+	return m, nil
 }
 
 func (rs SQLiteMasterRows) GetTableNames() []string {
@@ -232,7 +266,7 @@ func newSQLiteMasterRow(c *cell.LeafTablePageCell) (*SQLiteMasterRow, error) {
 		ObjectType: ObjectType(objectType),
 		Name:       name,
 		TableName:  tableName,
-		RootPage:   rootPage,
+		RootPage:   int(rootPage),
 		SQL:        q,
 	}, nil
 }

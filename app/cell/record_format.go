@@ -45,6 +45,22 @@ func (r Record) Int8() (int8, error) {
 	return i8, nil
 }
 
+func (r Record) Int16() (int16, error) {
+	var i16 int16
+	if err := binary.Read(bytes.NewReader(r), binary.BigEndian, &i16); err != nil {
+		return 0, err
+	}
+	return i16, nil
+}
+
+func (r Record) Int32() (int32, error) {
+	var i32 int32
+	if err := binary.Read(bytes.NewReader(r), binary.BigEndian, &i32); err != nil {
+		return 0, err
+	}
+	return i32, nil
+}
+
 type SerialTypeAndRecord struct {
 	SerialType SerialType
 	Record     Record
@@ -66,6 +82,40 @@ func (sr *SerialTypeAndRecord) Int8() (int8, error) {
 		return 0, fmt.Errorf("SerialTypeAndRecord.Int8() is not implemented for SerialType: %v", sr.SerialType)
 	}
 	return sr.Record.Int8()
+}
+
+func (sr *SerialTypeAndRecord) Int16() (int16, error) {
+	if sr.SerialType != SerialTypeI16 {
+		return 0, fmt.Errorf("SerialTypeAndRecord.Int16() is not implemented for SerialType: %v", sr.SerialType)
+	}
+	return sr.Record.Int16()
+}
+
+func (sr *SerialTypeAndRecord) Int32() (int32, error) {
+	if sr.SerialType != SerialTypeI32 && sr.SerialType != SerialTypeI24 {
+		return 0, fmt.Errorf("SerialTypeAndRecord.Int32() is not implemented for SerialType: %v", sr.SerialType)
+	}
+	// prepend 0 in order to avoid EOF error when reading binaries and to convert to int32
+	if sr.SerialType == SerialTypeI24 {
+		sr.Record = append([]byte{0}, sr.Record...)
+	}
+	return sr.Record.Int32()
+}
+
+func (sr *SerialTypeAndRecord) Int() (int, error) {
+	switch sr.SerialType {
+	case SerialTypeI8:
+		i8, err := sr.Int8()
+		return int(i8), err
+	case SerialTypeI16:
+		i16, err := sr.Int16()
+		return int(i16), err
+	case SerialTypeI24, SerialTypeI32:
+		i, err := sr.Int32()
+		return int(i), err
+	default:
+		return 0, fmt.Errorf("SerialTypeAndRecord.Int() is not implemented for SerialType: %v", sr.SerialType)
+	}
 }
 
 func GetSerialTypeAndContentSize(num uint64) *SerialTypeAndContentSize {

@@ -25,6 +25,16 @@ type InteriorTable struct {
 	*header.BTreeHeader
 }
 
+type InteriorIndex struct {
+	Offset uint
+	*header.BTreeHeader
+}
+
+type LeafIndex struct {
+	Offset uint
+	*header.BTreeHeader
+}
+
 func NewDBFirstPage(f *os.File) (*FirstPage, error) {
 	fh, read, err := header.NewFileHeader(f)
 	if err != nil {
@@ -121,6 +131,46 @@ func NewInteriorTable(f *os.File, pageSize, pageNum uint) (*InteriorTable, error
 	}
 
 	return &InteriorTable{
+		Offset:      (pageNum - 1) * pageSize,
+		BTreeHeader: bh,
+	}, nil
+}
+
+func NewInteriorIndex(f *os.File, pageSize, pageNum uint) (*InteriorIndex, error) {
+	if pageNum <= 0 {
+		return nil, fmt.Errorf("invalid pageNum: %d, should be greater than or equal to 1", pageNum)
+	}
+
+	if pageNum == 1 {
+		return nil, errors.New("call NewDBFirstPage when pageNum == 1")
+	}
+
+	bh, _, err := header.NewBTreeHeader(f, (pageNum-1)*pageSize)
+	if err != nil {
+		return nil, err
+	}
+
+	return &InteriorIndex{
+		Offset:      (pageNum - 1) * pageSize,
+		BTreeHeader: bh,
+	}, nil
+}
+
+func NewLeafIndex(f *os.File, pageSize, pageNum uint) (*LeafIndex, error) {
+	if pageNum <= 0 {
+		return nil, fmt.Errorf("invalid pageNum: %d, should be greater than or equal to 1", pageNum)
+	}
+
+	if pageNum == 1 {
+		return nil, errors.New("call NewDBFirstPage when pageNum == 1")
+	}
+
+	bh, _, err := header.NewBTreeHeader(f, (pageNum-1)*pageSize)
+	if err != nil {
+		return nil, err
+	}
+
+	return &LeafIndex{
 		Offset:      (pageNum - 1) * pageSize,
 		BTreeHeader: bh,
 	}, nil

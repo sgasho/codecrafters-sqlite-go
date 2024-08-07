@@ -10,12 +10,10 @@ import (
 )
 
 type NewInteriorTablePageCellRequest struct {
-	PageType      header.PageType
-	PageOffset    uint64
-	HeaderOffset  uint64
-	CellCount     uint64
-	ColumnPosList []int
-	Where         *Where
+	PageType     header.PageType
+	PageOffset   uint64
+	HeaderOffset uint64
+	CellCount    uint64
 }
 
 type InteriorTablePageCell struct {
@@ -34,10 +32,8 @@ func NewInteriorTablePageCells(f *os.File, r *NewInteriorTablePageCellRequest) (
 		}
 
 		cell, err := GetInteriorTablePageCell(f, &GetInteriorTablePageCellRequest{
-			PageType:      r.PageType,
-			Offset:        int64(r.PageOffset + uint64(cellContentOffset)),
-			ColumnPosList: r.ColumnPosList,
-			Where:         r.Where,
+			PageType: r.PageType,
+			Offset:   int64(r.PageOffset + uint64(cellContentOffset)),
 		})
 		if err != nil {
 			return nil, err
@@ -48,14 +44,12 @@ func NewInteriorTablePageCells(f *os.File, r *NewInteriorTablePageCellRequest) (
 }
 
 type GetInteriorTablePageCellRequest struct {
-	PageType      header.PageType
-	Offset        int64
-	ColumnPosList []int
-	Where         *Where
+	PageType header.PageType
+	Offset   int64
 }
 
 func GetInteriorTablePageCell(f *os.File, r *GetInteriorTablePageCellRequest) (*InteriorTablePageCell, error) {
-	if r.PageType != header.InteriorTableBTree {
+	if r.PageType != header.InteriorTableBTree && r.PageType != header.InteriorIndexBTree {
 		return nil, fmt.Errorf("GetInteriorTablePageCell() is not implemented for pageType: %v", r.PageType)
 	}
 

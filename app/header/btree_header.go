@@ -70,7 +70,7 @@ func NewBTreeHeader(f *os.File, offset uint) (*BTreeHeader, uint, error) {
 	}
 
 	var rightMostPointer uint32
-	if pageType == InteriorTableBTree {
+	if pageType == InteriorTableBTree || pageType == InteriorIndexBTree {
 		if err := binary.Read(bytes.NewReader(buf[8:12]), binary.BigEndian, &rightMostPointer); err != nil {
 			return nil, 0, err
 		}

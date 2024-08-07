@@ -1,6 +1,7 @@
 package sqlite
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"github/com/codecrafters-io/sqlite-starter-go/app/cell"
@@ -8,9 +9,13 @@ import (
 	"github/com/codecrafters-io/sqlite-starter-go/app/page"
 	"github/com/codecrafters-io/sqlite-starter-go/app/parser"
 	"strings"
+	"sync"
 
 	"github.com/rqlite/sql"
+	"golang.org/x/sync/errgroup"
 )
+
+var mu sync.Mutex
 
 type SQLite interface {
 	Count(query string, args ...any) (int, error)
@@ -108,7 +113,7 @@ func (db *sqlite) Select(q string, args ...any) (cell.LeafTablePageCells, error)
 		}
 	}
 
-	pageNum, err := db.PageNum(table)
+	pageNum, err := db.GetTraverseRootPageNum(table, where)
 	if err != nil {
 		return nil, err
 	}
@@ -133,6 +138,40 @@ func (db *sqlite) Select(q string, args ...any) (cell.LeafTablePageCells, error)
 		return db.getLeafTablePageCells(traverse)
 	case header.InteriorTableBTree:
 		return db.traverseInteriorTableToGetCells(traverse)
+	case header.InteriorIndexBTree:
+		targetRowIDs, err := db.traverseInteriorIndexesToGetTargetRowIDs(traverse)
+		if err != nil {
+			return nil, err
+		}
+		eg, _ := errgroup.WithContext(context.Background())
+		eg.SetLimit(100)
+		cells := make(cell.LeafTablePageCells, 0)
+		for _, targetRowID := range targetRowIDs {
+			targetRowID := targetRowID
+			eg.Go(func() error {
+				pn, err := db.PageNum(table)
+				if err != nil {
+					return err
+				}
+				cs, err := db.traverseInteriorTablesToGetCellsByPK(&TraverseBTreeByPrimaryKey{
+					PageNum:    uint(pn),
+					Table:      table,
+					Columns:    columns,
+					PrimaryKey: targetRowID,
+				})
+				if err != nil {
+					return err
+				}
+				mu.Lock()
+				cells = append(cells, cs...)
+				mu.Unlock()
+				return nil
+			})
+		}
+		if err := eg.Wait(); err != nil {
+			return nil, err
+		}
+		return cells, nil
 	default:
 		return nil, fmt.Errorf("invalid page type: %v", pageType)
 	}
@@ -143,6 +182,14 @@ type TraverseBTree struct {
 	Table   string
 	Columns []*sql.ResultColumn
 	Where   *cell.Where
+}
+
+// TODO: handle multiple primary key types
+type TraverseBTreeByPrimaryKey struct {
+	PageNum    uint
+	Table      string
+	Columns    []*sql.ResultColumn
+	PrimaryKey int
 }
 
 func (db *sqlite) getLeafTablePageCells(t *TraverseBTree) (cell.LeafTablePageCells, error) {
@@ -194,12 +241,7 @@ func (db *sqlite) traverseInteriorTableToGetCells(t *TraverseBTree) (cell.LeafTa
 	}
 
 	if b.PageType == header.LeafTableBTree {
-		return db.getLeafTablePageCells(&TraverseBTree{
-			PageNum: t.PageNum,
-			Table:   t.Table,
-			Columns: t.Columns,
-			Where:   t.Where,
-		})
+		return db.getLeafTablePageCells(t)
 	}
 
 	ip, err := page.NewInteriorTable(db.f, db.PageSize(), t.PageNum)
@@ -207,23 +249,11 @@ func (db *sqlite) traverseInteriorTableToGetCells(t *TraverseBTree) (cell.LeafTa
 		return nil, err
 	}
 
-	columnNames := make([]string, len(t.Columns))
-	for i, column := range t.Columns {
-		columnNames[i] = column.String()
-	}
-
-	columnPosList, err := db.firstPage.SQLiteMasterRows.GetColumnPosList(t.Table, columnNames)
-	if err != nil {
-		return nil, err
-	}
-
 	cells, err := cell.NewInteriorTablePageCells(db.f, &cell.NewInteriorTablePageCellRequest{
-		PageType:      ip.PageType,
-		PageOffset:    uint64(ip.Offset),
-		HeaderOffset:  uint64(bhSize),
-		CellCount:     uint64(ip.BTreeHeader.CellCount),
-		ColumnPosList: columnPosList,
-		Where:         t.Where,
+		PageType:     ip.PageType,
+		PageOffset:   uint64(ip.Offset),
+		HeaderOffset: uint64(bhSize),
+		CellCount:    uint64(ip.BTreeHeader.CellCount),
 	})
 	if err != nil {
 		return nil, err
@@ -255,4 +285,220 @@ func (db *sqlite) traverseInteriorTableToGetCells(t *TraverseBTree) (cell.LeafTa
 	leafCells = append(leafCells, cs...)
 
 	return leafCells, nil
+}
+
+func (db *sqlite) traverseInteriorIndexesToGetTargetRowIDs(t *TraverseBTree) ([]int, error) {
+	b, bhSize, err := header.NewBTreeHeader(db.f, (t.PageNum-1)*db.PageSize())
+	if err != nil {
+		return nil, err
+	}
+
+	if b.PageType == header.LeafIndexBTree {
+		return db.traverseLeafIndexesToGetTargetPrimaryKeys(t)
+	}
+
+	ii, err := page.NewInteriorIndex(db.f, db.PageSize(), t.PageNum)
+	if err != nil {
+		return nil, err
+	}
+
+	cells, err := cell.NewInteriorIndexPageCells(db.f, &cell.NewInteriorIndexPageCellRequest{
+		PageType:     ii.PageType,
+		PageOffset:   uint64(ii.Offset),
+		HeaderOffset: uint64(bhSize),
+		CellCount:    uint64(b.CellCount),
+		Where:        t.Where,
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	// TODO: handle multiple where conditions
+	targetRowIDs := make([]int, 0)
+	leftChildPageNumsToDeepDive := make([]uint, 0)
+	for _, c := range cells {
+		rowIDColumn := c.SerialTypeAndRecords[1]
+		whereKey := c.SerialTypeAndRecords[0].Record.String()
+		// TODO: binary search
+		if t.Where.Clause.Value <= whereKey {
+			if t.Where.Clause.Value == whereKey {
+				rowID, err := rowIDColumn.Int()
+				if err != nil {
+					return nil, err
+				}
+				targetRowIDs = append(targetRowIDs, rowID)
+			}
+			leftChildPageNumsToDeepDive = append(leftChildPageNumsToDeepDive, uint(c.LeftChildPageNum))
+		}
+	}
+
+	for _, leftChildPageNum := range leftChildPageNumsToDeepDive {
+		rowIDs, err := db.traverseInteriorIndexesToGetTargetRowIDs(&TraverseBTree{
+			PageNum: leftChildPageNum,
+			Table:   t.Table,
+			Columns: t.Columns,
+			Where:   t.Where,
+		})
+		if err != nil {
+			return nil, err
+		}
+		targetRowIDs = append(targetRowIDs, rowIDs...)
+	}
+
+	if len(leftChildPageNumsToDeepDive) == 0 {
+		rowIDs, err := db.traverseInteriorIndexesToGetTargetRowIDs(&TraverseBTree{
+			PageNum: ii.RightMostPointer,
+			Table:   t.Table,
+			Columns: t.Columns,
+			Where:   t.Where,
+		})
+		if err != nil {
+			return nil, err
+		}
+		targetRowIDs = append(targetRowIDs, rowIDs...)
+	}
+
+	return targetRowIDs, nil
+}
+
+// TODO: not only row ids
+func (db *sqlite) traverseLeafIndexesToGetTargetPrimaryKeys(t *TraverseBTree) ([]int, error) {
+	b, bhSize, err := header.NewBTreeHeader(db.f, (t.PageNum-1)*db.PageSize())
+	if err != nil {
+		return nil, err
+	}
+
+	li, err := page.NewLeafIndex(db.f, db.PageSize(), t.PageNum)
+	if err != nil {
+		return nil, err
+	}
+
+	cells, err := cell.NewLeafIndexPageCells(db.f, &cell.NewLeafIndexPageCellRequest{
+		PageType:     li.PageType,
+		PageOffset:   uint64(li.Offset),
+		HeaderOffset: uint64(bhSize),
+		CellCount:    uint64(b.CellCount),
+		Where:        t.Where,
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	targetRowIDs := make([]int, 0)
+	for _, c := range cells {
+		whereClauseColumn := c.SerialTypeAndRecords[0]
+		rowIDColumn := c.SerialTypeAndRecords[1]
+		if whereClauseColumn.Record.String() == t.Where.Clause.Value {
+			rowID, err := rowIDColumn.Int()
+			if err != nil {
+				return nil, err
+			}
+			targetRowIDs = append(targetRowIDs, rowID)
+		}
+	}
+
+	return targetRowIDs, nil
+}
+
+// TODO: not only row ids
+func (db *sqlite) traverseInteriorTablesToGetCellsByPK(t *TraverseBTreeByPrimaryKey) (cell.LeafTablePageCells, error) {
+	b, bhSize, err := header.NewBTreeHeader(db.f, (t.PageNum-1)*db.PageSize())
+	if err != nil {
+		return nil, err
+	}
+
+	if b.PageType == header.LeafTableBTree {
+		return db.getLeafTablesToGetCellsByPK(t)
+	}
+
+	ii, err := page.NewInteriorIndex(db.f, db.PageSize(), t.PageNum)
+	if err != nil {
+		return nil, err
+	}
+
+	cells, err := cell.NewInteriorTablePageCells(db.f, &cell.NewInteriorTablePageCellRequest{
+		PageType:     ii.PageType,
+		PageOffset:   uint64(ii.Offset),
+		HeaderOffset: uint64(bhSize),
+		CellCount:    uint64(b.CellCount),
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	leafCells := make(cell.LeafTablePageCells, 0)
+	for _, c := range cells {
+		// TODO: binary search
+		if t.PrimaryKey <= int(c.RowID) {
+			if t.PrimaryKey <= int(c.RowID) {
+				cs, err := db.traverseInteriorTablesToGetCellsByPK(&TraverseBTreeByPrimaryKey{
+					PageNum:    uint(c.LeftChildPageNum),
+					Table:      t.Table,
+					Columns:    t.Columns,
+					PrimaryKey: t.PrimaryKey,
+				})
+				if err != nil {
+					return nil, err
+				}
+				leafCells = append(leafCells, cs...)
+			}
+		}
+	}
+
+	if len(leafCells) == 0 {
+		cs, err := db.traverseInteriorTablesToGetCellsByPK(&TraverseBTreeByPrimaryKey{
+			PageNum:    ii.RightMostPointer,
+			Table:      t.Table,
+			Columns:    t.Columns,
+			PrimaryKey: t.PrimaryKey,
+		})
+		if err != nil {
+			return nil, err
+		}
+		leafCells = append(leafCells, cs...)
+	}
+
+	return leafCells, nil
+}
+
+func (db *sqlite) getLeafTablesToGetCellsByPK(t *TraverseBTreeByPrimaryKey) (cell.LeafTablePageCells, error) {
+	lp, err := page.NewLeafTablePage(db.f, db.PageSize(), t.PageNum)
+	if err != nil {
+		return nil, err
+	}
+
+	bhSize, err := lp.BTreeHeader.PageType.GetBTreeHeaderSize()
+	if err != nil {
+		return nil, err
+	}
+
+	columnNames := make([]string, len(t.Columns))
+	for i, column := range t.Columns {
+		columnNames[i] = column.String()
+	}
+
+	columnPosList, err := db.firstPage.SQLiteMasterRows.GetColumnPosList(t.Table, columnNames)
+	if err != nil {
+		return nil, err
+	}
+
+	autoIncrPrimaryKeys, err := db.firstPage.SQLiteMasterRows.AutoIncrIntegerPrimaryKeys(t.Table)
+	if err != nil {
+		return nil, err
+	}
+
+	autoIncrPrimaryKeyPosList, err := db.firstPage.SQLiteMasterRows.GetColumnPosList(t.Table, autoIncrPrimaryKeys)
+	if err != nil {
+		return nil, err
+	}
+
+	return cell.NewLeafTablePageCellsByPK(db.f, &cell.NewLeafTablePageCellsByPKRequest{
+		PageType:           lp.PageType,
+		PageOffset:         uint64(lp.Offset),
+		HeaderOffset:       uint64(bhSize),
+		CellCount:          uint64(lp.BTreeHeader.CellCount),
+		ColumnPosList:      columnPosList,
+		AutoIncrKeyPosList: autoIncrPrimaryKeyPosList,
+		PrimaryKey:         t.PrimaryKey,
+	})
 }

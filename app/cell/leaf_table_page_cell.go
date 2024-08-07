@@ -62,6 +62,16 @@ type NewLeafTablePageCellRequest struct {
 	Where              *Where
 }
 
+type NewLeafTablePageCellsByPKRequest struct {
+	PageType           header.PageType
+	PageOffset         uint64
+	HeaderOffset       uint64
+	CellCount          uint64
+	ColumnPosList      []int
+	AutoIncrKeyPosList []int
+	PrimaryKey         int
+}
+
 func NewLeafTablePageCells(f *os.File, r *NewLeafTablePageCellRequest) (LeafTablePageCells, error) {
 	cells := make(LeafTablePageCells, 0)
 	for i := uint64(0); i < r.CellCount; i++ {
@@ -254,4 +264,136 @@ func doesCellMatchCondition(f *os.File, scs []*SerialTypeAndContentSize, current
 		wherePosOffset += int64(sc.ContentSize)
 	}
 	return true, nil
+}
+
+func NewLeafTablePageCellsByPK(f *os.File, r *NewLeafTablePageCellsByPKRequest) (LeafTablePageCells, error) {
+	cells := make(LeafTablePageCells, 0)
+	for i := uint64(0); i < r.CellCount; i++ {
+		cellContentOffset, err := GetCellContentOffset(f, int64(r.PageOffset+r.HeaderOffset+2*i))
+		if err != nil {
+			return nil, err
+		}
+
+		cell, err := GetLeafTablePageCellByPK(f, &GetLeafTablePageCellByPKRequest{
+			PageType:           r.PageType,
+			Offset:             int64(r.PageOffset + uint64(cellContentOffset)),
+			ColumnPosList:      r.ColumnPosList,
+			AutoIncrKeyPosList: r.AutoIncrKeyPosList,
+			PrimaryKey:         r.PrimaryKey,
+		})
+		if err != nil {
+			return nil, err
+		}
+		if cell == nil {
+			continue
+		}
+		cells = append(cells, cell)
+	}
+	return cells, nil
+}
+
+type GetLeafTablePageCellByPKRequest struct {
+	PageType           header.PageType
+	Offset             int64
+	ColumnPosList      []int
+	AutoIncrKeyPosList []int
+	PrimaryKey         int
+}
+
+func GetLeafTablePageCellByPK(f *os.File, r *GetLeafTablePageCellByPKRequest) (*LeafTablePageCell, error) {
+	if r.PageType != header.LeafTableBTree {
+		return nil, fmt.Errorf("GetLeafTablePageCell() is not implemented for pageType: %v", r.PageType)
+	}
+
+	readAtOffset := r.Offset
+
+	payloadBytes, read, err := utils.ReadUvarint(f, readAtOffset)
+	if err != nil {
+		return nil, err
+	}
+	readAtOffset += int64(read)
+
+	rowID, read, err := utils.ReadUvarint(f, readAtOffset)
+	if err != nil {
+		return nil, err
+	}
+	if r.PrimaryKey != int(rowID) {
+		return nil, nil
+	}
+
+	readAtOffset += int64(read)
+
+	recordHeaderSize, read, err := utils.ReadUvarint(f, readAtOffset)
+	if err != nil {
+		return nil, err
+	}
+	readAtOffset += int64(read)
+
+	scs := make([]*SerialTypeAndContentSize, 0)
+	headerRemain := recordHeaderSize - uint64(read) // The varint value is the size of the header in bytes including the size varint itself.
+	currentColumnPos := 0
+	for headerRemain > 0 {
+		serialType, read, err := utils.ReadUvarint(f, readAtOffset)
+		if err != nil {
+			return nil, err
+		}
+		// has possibility to be auto increment primary key when null
+		if serialType == uint64(SerialTypeNull) {
+			if utils.SliceIncludes(r.AutoIncrKeyPosList, currentColumnPos) {
+				serialType = uint64(SerialTypeAutoIncrPrimaryKey)
+			}
+		}
+		scs = append(scs, GetSerialTypeAndContentSize(serialType))
+		headerRemain -= uint64(read)
+		readAtOffset += int64(read)
+		currentColumnPos++
+	}
+
+	srs := make([]*SerialTypeAndRecord, 0)
+	if len(r.ColumnPosList) == 0 {
+		bodyRemain := payloadBytes - recordHeaderSize
+		for bodyRemain > 0 {
+			for _, sc := range scs {
+				off := readAtOffset
+				bodyRemain -= sc.ContentSize
+				readAtOffset += int64(sc.ContentSize)
+
+				buf := make([]byte, sc.ContentSize)
+				if _, err := f.ReadAt(buf, off); err != nil {
+					return nil, err
+				}
+
+				srs = append(srs, &SerialTypeAndRecord{
+					SerialType: sc.SerialType,
+					Record:     buf,
+				})
+			}
+		}
+	} else {
+		for _, columnPos := range r.ColumnPosList {
+			off := readAtOffset
+			for i, sc := range scs {
+				if i != columnPos {
+					off += int64(sc.ContentSize)
+					continue
+				}
+
+				buf := make([]byte, sc.ContentSize)
+				if _, err := f.ReadAt(buf, off); err != nil {
+					return nil, err
+				}
+
+				srs = append(srs, &SerialTypeAndRecord{
+					SerialType: sc.SerialType,
+					Record:     buf,
+				})
+				off += int64(sc.ContentSize)
+			}
+		}
+	}
+
+	return &LeafTablePageCell{
+		RowID:                rowID,
+		SerialTypeAndRecords: srs,
+	}, nil
 }
