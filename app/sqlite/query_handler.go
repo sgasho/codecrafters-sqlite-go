@@ -1,7 +1,6 @@
 package sqlite
 
 import (
-	"context"
 	"errors"
 	"fmt"
 	"github/com/codecrafters-io/sqlite-starter-go/app/cell"
@@ -12,7 +11,6 @@ import (
 	"sync"
 
 	"github.com/rqlite/sql"
-	"golang.org/x/sync/errgroup"
 )
 
 var mu sync.Mutex
@@ -143,34 +141,16 @@ func (db *sqlite) Select(q string, args ...any) (cell.LeafTablePageCells, error)
 		if err != nil {
 			return nil, err
 		}
-		eg, _ := errgroup.WithContext(context.Background())
-		eg.SetLimit(100)
-		cells := make(cell.LeafTablePageCells, 0)
-		for _, targetRowID := range targetRowIDs {
-			targetRowID := targetRowID
-			eg.Go(func() error {
-				pn, err := db.PageNum(table)
-				if err != nil {
-					return err
-				}
-				cs, err := db.traverseInteriorTablesToGetCellsByPK(&TraverseBTreeByPrimaryKey{
-					PageNum:    uint(pn),
-					Table:      table,
-					Columns:    columns,
-					PrimaryKey: targetRowID,
-				})
-				if err != nil {
-					return err
-				}
-				mu.Lock()
-				cells = append(cells, cs...)
-				mu.Unlock()
-				return nil
-			})
-		}
-		if err := eg.Wait(); err != nil {
+		pn, err := db.PageNum(table)
+		if err != nil {
 			return nil, err
 		}
+		cells, err := db.traverseInteriorTablesToGetCellsByPK(&TraverseBTreeByPrimaryKey{
+			PageNum:     uint(pn),
+			Table:       table,
+			Columns:     columns,
+			PrimaryKeys: targetRowIDs,
+		})
 		return cells, nil
 	default:
 		return nil, fmt.Errorf("invalid page type: %v", pageType)
@@ -186,10 +166,10 @@ type TraverseBTree struct {
 
 // TODO: handle multiple primary key types
 type TraverseBTreeByPrimaryKey struct {
-	PageNum    uint
-	Table      string
-	Columns    []*sql.ResultColumn
-	PrimaryKey int
+	PageNum     uint
+	Table       string
+	Columns     []*sql.ResultColumn
+	PrimaryKeys []int
 }
 
 func (db *sqlite) getLeafTablePageCells(t *TraverseBTree) (cell.LeafTablePageCells, error) {
@@ -428,35 +408,38 @@ func (db *sqlite) traverseInteriorTablesToGetCellsByPK(t *TraverseBTreeByPrimary
 
 	leafCells := make(cell.LeafTablePageCells, 0)
 	for _, c := range cells {
-		// TODO: binary search
-		if t.PrimaryKey <= int(c.RowID) {
-			if t.PrimaryKey <= int(c.RowID) {
-				cs, err := db.traverseInteriorTablesToGetCellsByPK(&TraverseBTreeByPrimaryKey{
-					PageNum:    uint(c.LeftChildPageNum),
-					Table:      t.Table,
-					Columns:    t.Columns,
-					PrimaryKey: t.PrimaryKey,
-				})
-				if err != nil {
-					return nil, err
+		primaryKeysToTraverseBy := make([]int, 0)
+		for _, pk := range t.PrimaryKeys {
+			if pk <= int(c.RowID) {
+				if pk <= int(c.RowID) {
+					primaryKeysToTraverseBy = append(primaryKeysToTraverseBy, pk)
 				}
-				leafCells = append(leafCells, cs...)
 			}
+		}
+		if len(primaryKeysToTraverseBy) > 0 {
+			cs, err := db.traverseInteriorTablesToGetCellsByPK(&TraverseBTreeByPrimaryKey{
+				PageNum:     uint(c.LeftChildPageNum),
+				Table:       t.Table,
+				Columns:     t.Columns,
+				PrimaryKeys: primaryKeysToTraverseBy,
+			})
+			if err != nil {
+				return nil, err
+			}
+			leafCells = append(leafCells, cs...)
 		}
 	}
 
-	if len(leafCells) == 0 {
-		cs, err := db.traverseInteriorTablesToGetCellsByPK(&TraverseBTreeByPrimaryKey{
-			PageNum:    ii.RightMostPointer,
-			Table:      t.Table,
-			Columns:    t.Columns,
-			PrimaryKey: t.PrimaryKey,
-		})
-		if err != nil {
-			return nil, err
-		}
-		leafCells = append(leafCells, cs...)
+	cs, err := db.traverseInteriorTablesToGetCellsByPK(&TraverseBTreeByPrimaryKey{
+		PageNum:     ii.RightMostPointer,
+		Table:       t.Table,
+		Columns:     t.Columns,
+		PrimaryKeys: t.PrimaryKeys,
+	})
+	if err != nil {
+		return nil, err
 	}
+	leafCells = append(leafCells, cs...)
 
 	return leafCells, nil
 }
@@ -492,13 +475,13 @@ func (db *sqlite) getLeafTablesToGetCellsByPK(t *TraverseBTreeByPrimaryKey) (cel
 		return nil, err
 	}
 
-	return cell.NewLeafTablePageCellsByPK(db.f, &cell.NewLeafTablePageCellsByPKRequest{
+	return cell.NewLeafTablePageCellsByPK(db.f, &cell.NewLeafTablePageCellsByPKsRequest{
 		PageType:           lp.PageType,
 		PageOffset:         uint64(lp.Offset),
 		HeaderOffset:       uint64(bhSize),
 		CellCount:          uint64(lp.BTreeHeader.CellCount),
 		ColumnPosList:      columnPosList,
 		AutoIncrKeyPosList: autoIncrPrimaryKeyPosList,
-		PrimaryKey:         t.PrimaryKey,
+		PrimaryKeys:        t.PrimaryKeys,
 	})
 }

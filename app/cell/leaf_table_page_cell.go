@@ -62,14 +62,14 @@ type NewLeafTablePageCellRequest struct {
 	Where              *Where
 }
 
-type NewLeafTablePageCellsByPKRequest struct {
+type NewLeafTablePageCellsByPKsRequest struct {
 	PageType           header.PageType
 	PageOffset         uint64
 	HeaderOffset       uint64
 	CellCount          uint64
 	ColumnPosList      []int
 	AutoIncrKeyPosList []int
-	PrimaryKey         int
+	PrimaryKeys        []int
 }
 
 func NewLeafTablePageCells(f *os.File, r *NewLeafTablePageCellRequest) (LeafTablePageCells, error) {
@@ -266,7 +266,7 @@ func doesCellMatchCondition(f *os.File, scs []*SerialTypeAndContentSize, current
 	return true, nil
 }
 
-func NewLeafTablePageCellsByPK(f *os.File, r *NewLeafTablePageCellsByPKRequest) (LeafTablePageCells, error) {
+func NewLeafTablePageCellsByPK(f *os.File, r *NewLeafTablePageCellsByPKsRequest) (LeafTablePageCells, error) {
 	cells := make(LeafTablePageCells, 0)
 	for i := uint64(0); i < r.CellCount; i++ {
 		cellContentOffset, err := GetCellContentOffset(f, int64(r.PageOffset+r.HeaderOffset+2*i))
@@ -274,12 +274,12 @@ func NewLeafTablePageCellsByPK(f *os.File, r *NewLeafTablePageCellsByPKRequest) 
 			return nil, err
 		}
 
-		cell, err := GetLeafTablePageCellByPK(f, &GetLeafTablePageCellByPKRequest{
+		cell, err := GetLeafTablePageCellByPK(f, &GetLeafTablePageCellByPKsRequest{
 			PageType:           r.PageType,
 			Offset:             int64(r.PageOffset + uint64(cellContentOffset)),
 			ColumnPosList:      r.ColumnPosList,
 			AutoIncrKeyPosList: r.AutoIncrKeyPosList,
-			PrimaryKey:         r.PrimaryKey,
+			PrimaryKeys:        r.PrimaryKeys,
 		})
 		if err != nil {
 			return nil, err
@@ -292,15 +292,15 @@ func NewLeafTablePageCellsByPK(f *os.File, r *NewLeafTablePageCellsByPKRequest) 
 	return cells, nil
 }
 
-type GetLeafTablePageCellByPKRequest struct {
+type GetLeafTablePageCellByPKsRequest struct {
 	PageType           header.PageType
 	Offset             int64
 	ColumnPosList      []int
 	AutoIncrKeyPosList []int
-	PrimaryKey         int
+	PrimaryKeys        []int
 }
 
-func GetLeafTablePageCellByPK(f *os.File, r *GetLeafTablePageCellByPKRequest) (*LeafTablePageCell, error) {
+func GetLeafTablePageCellByPK(f *os.File, r *GetLeafTablePageCellByPKsRequest) (*LeafTablePageCell, error) {
 	if r.PageType != header.LeafTableBTree {
 		return nil, fmt.Errorf("GetLeafTablePageCell() is not implemented for pageType: %v", r.PageType)
 	}
@@ -317,7 +317,7 @@ func GetLeafTablePageCellByPK(f *os.File, r *GetLeafTablePageCellByPKRequest) (*
 	if err != nil {
 		return nil, err
 	}
-	if r.PrimaryKey != int(rowID) {
+	if !utils.SliceIncludes(r.PrimaryKeys, int(rowID)) {
 		return nil, nil
 	}
 
